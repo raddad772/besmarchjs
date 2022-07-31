@@ -31,6 +31,7 @@ class vec3 {
         this.x = x;
         this.y = y;
         this.z = z;
+        return this;
     }
 
     add(vec) {
@@ -195,21 +196,73 @@ class doublesphere_t {
     }
 }
 
+class mandelbulb2_t {
+    constructor() {
+        this.distance = 0;
+        this.ref_name = "mandelbulb v2";
+        this.color = new vec3(1.0, 1.0, 1.0);
+
+        this.has_surface_normal = true;
+        this.has_surface_shader = false;
+
+        this.bailout = 500000;
+        this.iterations = 1000;
+        this.power = 8;
+        this.last = 0;
+        this.gradient = 0;
+    }
+
+    /** @param {vec3} pos
+     **/
+    escapeLength(pos)
+    {
+        let z = new vec3(pos);
+        for (let i=1; i < this.iterations; i++) {
+            z = BulbPower(z, this.power).add(pos);
+            let r2 = dot3(z, z);
+            if ((r2 > this.bailout && this.last === 0) || (i === this.last)) {
+                this.last = i;
+                return z.magnitude();
+            }
+        }
+        return z.magnitude();
+	}
+
+    dist_func(pos) {
+        this.last = 0;
+        let r = this.escapeLength(pos);
+        if (r*r<this.bailout) return 0.0;
+        this.gradient = (vec3(escapeLength(p+xDir*EPS), escapeLength(p+yDir*EPS), escapeLength(p+zDir*EPS))-r)/EPS;
+        return 0.5*r*log(r)/length(gradient);
+    }
+
+}
+
+
 class mandelbulb_t {
     constructor() {
         this.distance = 0;
         this.ref_name = "fractal";
         this.color = new vec3(1.0, 1.0, 1.0);
 
-        this.has_surface_normal = false;
-        this.has_surface_shader = false;
+        this.has_surface_normal = true;
+        this.has_surface_shader = true;
 
         //this.pos = new vec3(0, 0, 0);
 
-        this.bailout = 5000000;
-        this.iterations = 1000;
+        this.bailout = 10;
+        this.iterations = 100;
         this.power = 8;
+        this.gradient = new vec3();
     }
+
+    surface_shade(scene, ray, cam) {
+        let light = new vec3(scene.lights[0].pos).subtract(ray.pos).normalize();
+        let dp = dot3(light, this.surface_normal());
+        if (dp < 0) dp = 0;
+        return new vec3(dp*this.color.x, dp*this.color.y, dp*this.color.z);
+    }
+
 
     dist_func(from) {
         let z = new vec3(from);
@@ -236,9 +289,15 @@ class mandelbulb_t {
             //z = zr*vec3(sin(theta)*cos(phi), sin(phi)*sin(theta), cos(theta));
             //z+=pos;
         }
+        this.gradient.copy(z).subtract(from);
+        //console.log(r/dr);
         let f = 0.5*Math.log(r)*r/dr;
         //console.log(f);
         return f;
+    }
+
+    surface_normal() {
+        return this.gradient.normalize();
     }
 }
 
@@ -323,11 +382,15 @@ class camera {
 }
 
 var canvas;
-const XRES=320;
-const YRES=240;
+const XRES=640;
+const YRES=480;
 const pi = Math.PI;
 
-const DIST_FOR_HIT = .0001
+const DIST_FOR_HIT = .00005;
+
+const ui_el = {
+    dist_for_hit_input: ['distforhit', DIST_FOR_HIT],
+}
 
 function render_tests(imgdata) {
     // 90 degrees (0) is at pi/2
@@ -340,7 +403,7 @@ function render_tests(imgdata) {
 
 
     let cam = new camera();
-    cam.pos.set(0, 0, 2)
+    cam.pos.set(.5, 0, 1.5)
     let vecs = new Array(XRES * YRES);
     cam.setup_viewport(XRES, YRES, 90);
     console.log('Setting up rays')
@@ -386,20 +449,22 @@ function render_tests(imgdata) {
                 glow = glow > .2 ? (1.0 * glow) : 0;
                 color.add(new vec3(glow, 0, 0));
                 color.normalize_1();
+                color.set(0, 0, 0);
             }
             else {
                 let obj = scene.min_was;
-                if (obj.has_surface_normal) {
-                    if (obj.has_surface_shader) {
-                        color = obj.surface_shade(scene, ray, cam);
-                    }
-                    else if (obj.has_surface_normal) {
-                        color.copy(obj.surface_normal(ray.pos)).abself().add(new vec3(1.0, 1.0, 1.0)).scale_by(.5);
-                    }
-                    else {
-                        color.copy(obj.color);
-                    }
+                let scaler = ray.num_steps / 100;
+                color.set(1.0, 1.0, 1.0).scale_by(scaler);
+                /*
+                if (obj.has_surface_shader) {
+                    color = obj.surface_shade(scene, ray, cam)
                 }
+                else if (obj.has_surface_normal) {
+                    color.copy(obj.surface_normal(ray.pos)).abself().add(new vec3(1.0, 1.0, 1.0)).scale_by(.5);
+                }
+                else {
+                    color.copy(obj.color);
+                }*/
             }
 
             imgdata[dp] = (color.x * 255) >> 0;
