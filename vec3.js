@@ -124,4 +124,28 @@ class vec3 {
         this.z = x*D[8] + y*D[9] + z*D[10] + D[11];
         return this;
     }
+
+    serialize(buf, pos) {
+        let outbuf = new ArrayBuffer(24);
+        let obuf = new Float64Array(outbuf);
+        obuf[0] = this.x;
+        obuf[1] = this.y;
+        obuf[2] = this.z;
+        let dbuf = new Uint8Array(outbuf);
+        for (let i = 0; i < 24; i++) {
+            buf[pos+i] = dbuf[i];
+        }
+    }
+
+    deserialize(buf, pos) {
+        let inbuf = new ArrayBuffer(24);
+        let ibuf = new Float64Array(inbuf);
+        let dbuf = new Uint8Array(buf);
+        for (let i = 0; i < 24; i++) {
+            dbuf[i] = buf[pos+i];
+        }
+        this.x = ibuf[0];
+        this.y = ibuf[1];
+        this.z = ibuf[2];
+    }
 }

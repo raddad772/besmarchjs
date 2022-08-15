@@ -1,63 +1,39 @@
 "use strict";
 
+const RMSETTINGS = {
+    cam: null,              // Placeholder for camera class
+    XRES: 900,              // X render resolution
+    YRES: 600,              // Y render resolution
+    DIST_FOR_HIT: .00005,   // Distance for distance-based hits
+    num_threads: 12,        // 12 threads to render with
+    OUTPUT_BUFFER_SIZE: 25, // 25 bytes per output pixel. A kind and up to 3 float64's
+    BKG_SKY: true,          // Make the background sky-ish?
+    DO_GLOW: false,         // Do a glow effect
+    GLOW_COLOR: new vec3(.1, 1, .25),
+    MAX_MARCHES: 1000       // Maximum number of marches
+}
+
 const NMAX = 0x7FFFFFFFF
-const BKG_SKY = true
-const DO_GLOW = false;
-const GLOW_COLOR = new vec3(1, 1, 0);
 
 function dot3(vec1, vec2) {
     return (vec1.x*vec2.x) + (vec1.y*vec2.y) + (vec1.z*vec2.z);
 }
 
-class ray_t {
-    constructor(origin=null, dir=null) {
-        if (origin !== null) this.origin = new vec3(origin);
-        else this.origin = new vec3();
-        if (dir !== null) this.dir = new vec3(dir);
-        else this.dir = new vec3();
-        this.pos = new vec3(this.origin);
-        this.num_steps = 0;
-    }
-
-    at(t=null) {
-        if (t === null) t = this.t;
-        let r = new vec3(this.dir);
-        r.scale_by(t);
-        r.add(this.origin)
-        return r;
+class raymarch_request_t {
+    constructor(scene, output_buffer, y_start, y_end) {
+        this.settings = RMSETTINGS;
+        this.output_buffer = output_buffer;
+        this.scene = scene;
+        this.y_start = y_start;
+        this.y_end = y_end;
     }
 }
 
-class scene_t {
-    constructor() {
-        this.objects = [];
-        this.lights = [];
-        this.min_was = null;
-        this.bounding_sphere = new sphere_t();
-        this.bounding_sphere.pos.set(0, 0, 0);
-        this.bounding_sphere.radius = 20.0;
-    }
-
-    add_object(obj) {
-        this.objects.push(obj);
-    }
-
-    add_light(light) {
-        this.lights.push(light);
-    }
-
-    min_distance(where) {
-        let min = NMAX;
-        for (let i in this.objects) {
-            let obj = this.objects[i];
-            let d = obj.dist_func(where);
-            if (d < min) {
-                min = d;
-                this.min_was = this.objects[i];
-            }
-        }
-        return min;
-    }
+const HIT_KINDS = {
+    MISS: 0,
+    COLOR: 1,
+    NORMAL: 2,
+    STEP_COUNTED: 3
 }
 
 class light_t {
@@ -165,38 +141,118 @@ class sphere_t {
     }
 }
 
-const MAX_MARCHES = 100000
-
 var canvas;
-const XRES=900;
-const YRES=600;
 const pi = Math.PI;
-
-const DIST_FOR_HIT = .00005;
 
 const ui_el = {
     dist_for_hit_input: ['distforhit', DIST_FOR_HIT],
 }
 
-function render_tests(imgdata) {
-    // 90 degrees (0) is at pi/2
-    // 180 degrees (+1) at pi
-    // 270 degrees (-1) at pi * (3/2)
+class raymarcher_t {
+    constructor(imgdata) {
+        this.imgdata = imgdata;
+        this.workers = new Array(RMSETTINGS.num_threads);
+        if (RMSETTINGS.num_threads > 1) {
+			for (let w = 0; w < RMSETTINGS.num_threads; w++) {
+				//this.workers[w] = new Worker('snes_ppu_worker.js');
+				/*if (PPU_USE_BLOBWORKERS) {
+					this.workers[w] = new Worker(URL.createObjectURL(new Blob(["(" + PPU_worker_function.toString() + ")()"], {type: 'text/javascript'})));
+				} else {*/
+                this.workers[w] = new Worker('render_worker.js');
+				//}
+				//const myWorker = new Worker("worker.js");
+				this.workers[w].onmessage = this.on_worker_message.bind(this);
+			}
+		}
+        this.workers_finished = 0;
+        this.output_buffer = new SharedArrayBuffer(RMSETTINGS.XRES * RMSETTINGS.YRES * RMSETTINGS.OUTPUT_BUFFER_SIZE)
+    }
 
-    // complete circle in 2 pi
-    let angle = 270;
-    let degrees_to_radians = function(degrees) { return (degrees / 180) * pi };
+    dispatch_to_worker(num, msg) {
+        this.workers[num].postMessage(msg);
+    }
+
+    present() {
+        console.log('TIME TO DECODE WHAT THE WORKERS SENT AND PAINT TO DISPLAY...');
+        let color = new vec3();
+        let inbuffer = new Uint8Array(this.output_buffer);
+        let hitdata = new hit_t();
+        for (let y = 0; y < RMSETTINGS.YRES; y++) {
+            for (let x = 0; x < RMSETTINGS.XRES; x++) {
+                let psb = ((y * RMSETTINGS.XRES) + x) * RMSETTINGS.OUTPUT_BUFFER_SIZE;
+
+                hitdata.deserialize(this.output_buffer, psb);
+                switch(hitdata.kind) {
+                    case HIT_KINDS.MISS:
+                        color.set(1, 0, 0);
+                        break;
+                    case HIT_KINDS.COLOR:
+                        color.copy(hitdata.color);
+                        break;
+                    case HIT_KINDS.NORMAL:
+                        console.log("UHHH why did I make this");
+                        break;
+                    case HIT_KINDS.STEP_COUNTED:
+                        // Do step count stuff here
+                        break;
+                }
 
 
-    let cam = new camera();
-    cam.pos.set(1, 0, 1.5)
-    let roto = degrees_to_radians(-30);
-    cam.angle.set(0, roto, 0);
-    let vecs = new Array(XRES * YRES);
-    cam.setup_viewport(XRES, YRES, 90);
-    console.log('Setting up rays')
-    cam.generate_vectors(vecs);
-    console.log('Setting up scene')
+            }
+        }
+
+
+                let pid = ((y * RMSETTINGS.XRES) + x) * 4;
+                this.imgdata[pid] = r;
+                this.imgdata[pid+1] = g;
+                this.imgdata[pid+2] = b;
+                this.imgdata[pid+3] = 255;
+
+        this.then();
+    }
+
+    on_worker_message(e) {
+        this.workers_finished++;
+        if (this.workers_finished >= RMSETTINGS.num_threads) {
+            this.present();
+        }
+    }
+
+    render(scene, then) {
+        this.then = then;
+        // 90 degrees (0) is at pi/2
+        // 180 degrees (+1) at pi
+        // 270 degrees (-1) at pi * (3/2)
+
+        // complete circle in 2 pi
+        let angle = 270;
+        let degrees_to_radians = function(degrees) { return (degrees / 180) * pi };
+
+        let cam = new raycamera();
+        cam.pos.set(1, 0, 1.5)
+        let roto = degrees_to_radians(-30);
+        cam.angle.set(0, roto, 0);
+        cam.setup_viewport(RMSETTINGS.XRES, RMSETTINGS.YRES, 90);
+        console.log('Setting up rays')
+        cam.generate_vectors(vecs);
+        console.log('Setting up scene')
+        RMSETTINGS.cam = cam;
+        let slices = [];
+        // R G B, Z, N
+        let slice_size = Math.floor(RMSETTINGS.YRES / RMSETTINGS.num_threads);
+        let y = 0;
+        for (let threadnum=0; threadnum<RMSETTINGS.num_threads; threadnum++) {
+            slices[threadnum] = new raymarch_request_t(scene, this.output_buffer, y, (y+slice_size)-1);
+            y += slice_size;
+        }
+        this.workers_finshed = 0;
+        for (let i = 0; i<RMSETTINGS.num_threads; i++) {
+            this.dispatch_to_worker(i, slices[i]);
+        }
+    }
+}
+
+function make_scene() {
     let scene = new scene_t();
     let sphere = new sphere_t();
     let light = new light_t();
@@ -207,72 +263,21 @@ function render_tests(imgdata) {
     scene.add_light(light);
     let mbulb = new mandelbulb_t();
     scene.add_object(mbulb);
-    let color = new vec3();
-    console.log('Marching rays');
-    for (let y = 0; y<YRES; y++) {
-        console.log('On Y', y);
-        for (let x = 0; x<XRES; x++) {
-            let dp = (y*XRES)+x;
-            let ray = new ray_t(cam.pos, vecs[dp]);
-            dp *= 4;
-            let hit = false;
-            let oob = new vec3();
-            for (ray.num_steps = 0; ray.num_steps < MAX_MARCHES; ray.num_steps++) {
-                let dist = scene.min_distance(ray.pos);
-                ray.pos.add(new vec3(ray.dir).scale_by(dist));
-                if (dist <= DIST_FOR_HIT) {
-                    hit = true;
-                    break;
-                }
-                if (oob.copy(ray.pos).subtract(scene.bounding_sphere.pos).magnitude() > scene.bounding_sphere.radius) break;
-            }
-            if (!hit) {
-                if (BKG_SKY) {
-                    let t = (0.5 * vecs[dp / 4].y) + 1.0;
-                    color.set(1.0 - t, 1.0 - t, 1.0 - t);
-                    color.add(new vec3(0.5, 0.7, 1.0).scale_by(t));
-                    color.normalize_1();
-                    // Add a glow if we came close
-                    if (DO_GLOW) {
-                        let glow = (ray.num_steps / 100);
-                        if (glow > 1) glow = 1;
-                        glow = glow > .2 ? (1.0 * glow) : 0;
-                        color.add(new vec3(GLOW_COLOR.x, GLOW_COLOR.y, GLOW_COLOR.z).scale_by(glow));
-                    }
-                    color.normalize_1();
-                } else {
-                    color.set(0, 0, 0);
-                }
-            }
-            else {
-                let obj = scene.min_was;
-                if (obj.has_surface_shader) {
-                    color = obj.surface_shade(scene, ray, cam)
-                } else if (obj.has_surface_normal) {
-                    color.copy(obj.surface_normal(ray.pos)).abself().add(new vec3(1.0, 1.0, 1.0)).scale_by(.5);
-                } else {
-                    color.copy(obj.color);
-                }
-            }
 
-            imgdata[dp] = (color.x * 255) >> 0;
-            imgdata[dp+1] = (color.y * 255) >> 0;
-            imgdata[dp+2] = (color.z * 255) >> 0;
-            imgdata[dp+3] = 255;
-
-            // March ray
-        }
-    }
+    return scene;
 }
 
 function main() {
     canvas = document.getElementById('drawhere');
-    let ctx = canvas.getContext('2d');
-    let imgdata = ctx.getImageData(0, 0, XRES, YRES);
-    render_tests(imgdata.data);
-    console.log('PUTTING IMAGE DATA...');
-    console.log('CANVAS!', canvas);
-    ctx.putImageData(imgdata, 0, 0);
+    var ctx = canvas.getContext('2d');
+    var imgdata = ctx.getImageData(0, 0, RMSETTINGS.XRES, RMSETTINGS.YRES);
+
+    let renderer = new raymarcher_t(imgdata.data, scene);
+    let scene = make_scene();
+    renderer.render(scene, function() {
+        console.log('DONE!');
+        ctx.putImageData(imgdata, 0, 0);
+    });
     console.log('PUT!');
 }
 

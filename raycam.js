@@ -1,4 +1,6 @@
-class camera {
+"use strict";
+
+class raycamera {
     constructor() {
         this.pos = new vec3(0, 0, 0);
         this.angle = new vec3(0, 0, 0);
@@ -8,6 +10,8 @@ class camera {
         this.viewport_width = 0;
         this.fov = 90;
         this.focal_length = 1.0;
+
+        this.view_vectors = [];
     }
 
     setup_viewport(x_res, y_res, horizontal_fov) {
@@ -17,9 +21,10 @@ class camera {
         this.x_res = x_res;
         this.y_res = y_res;
         this.fov = horizontal_fov;
+        this.view_vectors = new Array(x_res * y_res);
     }
 
-    generate_vectors(buf) {
+    generate_vectors() {
         let horizontal = new vec3(this.viewport_width, 0, 0);
         let vertical = new vec3(0, this.viewport_height, 0);
         let lower_left_corner = new vec3( -(horizontal.x * .5), -(vertical.y * .5), -this.focal_length);
@@ -40,7 +45,7 @@ class camera {
                 mvec.normalize();
                 mvec.apply_matrix(matrix);
                 //console.log('AFTER', mvec.x, mvec.y, mvec.z);
-                buf[(y*this.x_res) + x] = mvec;
+                this.view_vectors[(y*this.x_res) + x] = mvec;
             }
         }
     }
