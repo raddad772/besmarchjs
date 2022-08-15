@@ -233,6 +233,7 @@ class raymarcher_t {
         let roto = degrees_to_radians(-30);
         cam.angle.set(0, roto, 0);
         cam.setup_viewport(RMSETTINGS.XRES, RMSETTINGS.YRES, 90);
+        cam.zoom = 1;
         console.log('Setting up rays')
         cam.generate_vectors(vecs);
         console.log('Setting up scene')
@@ -271,16 +272,6 @@ class hit_scaler_t {
 }
 
 function make_scene() {
-    let cam = new camera();
-    cam.pos.set(-1, 0, -1.5)
-    let roto = degrees_to_radians(180 + -34);
-    cam.angle.set(0, roto, 0);
-    let vecs = new Array(XRES * YRES);
-    cam.zoom = 1;
-    cam.setup_viewport(RMSETTINGS.XRES, RMSETTINGS.YRES, 90);
-    console.log('Setting up rays')
-    cam.generate_vectors();
-    console.log('Setting up scene')
     let scene = new scene_t();
     let sphere = new sphere_t();
     let light = new light_t();
