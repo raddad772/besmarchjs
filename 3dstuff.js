@@ -4,13 +4,14 @@ const RMSETTINGS = {
     cam: null,              // Placeholder for camera class
     XRES: 900,              // X render resolution
     YRES: 600,              // Y render resolution
-    DIST_FOR_HIT: .00005,   // Distance for distance-based hits
+    DIST_FOR_HIT: .0000005, // Distance for distance-based hits
     num_threads: 12,        // 12 threads to render with
     OUTPUT_BUFFER_SIZE: 25, // 25 bytes per output pixel. A kind and up to 3 float64's
     BKG_SKY: true,          // Make the background sky-ish?
     DO_GLOW: false,         // Do a glow effect
     GLOW_COLOR: new vec3(.1, 1, .25),
-    MAX_MARCHES: 1000       // Maximum number of marches
+    MAX_MARCHES: 1000,      // Maximum number of marches
+    DO_HIT_MAP: false,
 }
 
 const NMAX = 0x7FFFFFFFF
@@ -118,6 +119,7 @@ class sphere_t {
 
         this.has_surface_shader = true;
         this.has_surface_normal = true;
+        this.shade_based_on_steps = false;
 
         // These are all "private"
         this.pos = new vec3();
@@ -153,17 +155,17 @@ class raymarcher_t {
         this.imgdata = imgdata;
         this.workers = new Array(RMSETTINGS.num_threads);
         if (RMSETTINGS.num_threads > 1) {
-			for (let w = 0; w < RMSETTINGS.num_threads; w++) {
-				//this.workers[w] = new Worker('snes_ppu_worker.js');
-				/*if (PPU_USE_BLOBWORKERS) {
-					this.workers[w] = new Worker(URL.createObjectURL(new Blob(["(" + PPU_worker_function.toString() + ")()"], {type: 'text/javascript'})));
-				} else {*/
+            for (let w = 0; w < RMSETTINGS.num_threads; w++) {
+                //this.workers[w] = new Worker('snes_ppu_worker.js');
+                /*if (PPU_USE_BLOBWORKERS) {
+                    this.workers[w] = new Worker(URL.createObjectURL(new Blob(["(" + PPU_worker_function.toString() + ")()"], {type: 'text/javascript'})));
+                } else {*/
                 this.workers[w] = new Worker('render_worker.js');
-				//}
-				//const myWorker = new Worker("worker.js");
-				this.workers[w].onmessage = this.on_worker_message.bind(this);
-			}
-		}
+                //}
+                //const myWorker = new Worker("worker.js");
+                this.workers[w].onmessage = this.on_worker_message.bind(this);
+            }
+        }
         this.workers_finished = 0;
         this.output_buffer = new SharedArrayBuffer(RMSETTINGS.XRES * RMSETTINGS.YRES * RMSETTINGS.OUTPUT_BUFFER_SIZE)
     }
@@ -196,17 +198,15 @@ class raymarcher_t {
                         // Do step count stuff here
                         break;
                 }
-
-
             }
         }
 
 
-                let pid = ((y * RMSETTINGS.XRES) + x) * 4;
+                /*let pid = ((y * RMSETTINGS.XRES) + x) * 4;
                 this.imgdata[pid] = r;
                 this.imgdata[pid+1] = g;
                 this.imgdata[pid+2] = b;
-                this.imgdata[pid+3] = 255;
+                this.imgdata[pid+3] = 255;*/
 
         this.then();
     }
@@ -252,7 +252,35 @@ class raymarcher_t {
     }
 }
 
+class hit_scaler_t {
+    constructor(max_hits) {
+        this.max_hits = max_hits * 0.5;
+
+        this.mh = this.max_hits;
+        this.ig = 1/5;
+
+    }
+    scale(num) {
+        //let r = Math.log2(num) / Math.log2(this.max_hits);
+        let r = num / this.max_hits;
+        if (r > 1) r = 1;
+        return 1 - Math.pow(r, this.ig);
+        //return 1.0 - r;
+    }
+
+}
+
 function make_scene() {
+    let cam = new camera();
+    cam.pos.set(-1, 0, -1.5)
+    let roto = degrees_to_radians(180 + -34);
+    cam.angle.set(0, roto, 0);
+    let vecs = new Array(XRES * YRES);
+    cam.zoom = 1;
+    cam.setup_viewport(RMSETTINGS.XRES, RMSETTINGS.YRES, 90);
+    console.log('Setting up rays')
+    cam.generate_vectors();
+    console.log('Setting up scene')
     let scene = new scene_t();
     let sphere = new sphere_t();
     let light = new light_t();
@@ -267,6 +295,25 @@ function make_scene() {
     return scene;
 }
 
+/*    if (DO_HIT_MAP) {
+        let scaler = new hit_scaler_t(max_hits);
+        for (let y = 0; y < YRES; y++) {
+            for (let x = 0; x < XRES; x++) {
+                let part = y*XRES + x;
+                let hm = hit_map[part];
+                if (hm !== 0) {
+                    let c = scaler.scale(hm);
+                    color.set(c, c, c);
+                    let dp = (y * XRES + x) * 4;
+                    imgdata[dp] = (color.x * 255) >> 0;
+                    imgdata[dp + 1] = (color.y * 255) >> 0;
+                    imgdata[dp + 2] = (color.z * 255) >> 0;
+                    imgdata[dp + 3] = 255;
+                }
+            }
+        }
+    }*/
+
 function main() {
     canvas = document.getElementById('drawhere');
     var ctx = canvas.getContext('2d');
@@ -277,9 +324,8 @@ function main() {
     renderer.render(scene, function() {
         console.log('DONE!');
         ctx.putImageData(imgdata, 0, 0);
+        console.log('PUT!');
     });
-    console.log('PUT!');
 }
-
 
 window.onload = main;

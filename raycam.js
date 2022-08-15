@@ -10,13 +10,13 @@ class raycamera {
         this.viewport_width = 0;
         this.fov = 90;
         this.focal_length = 1.0;
-
         this.view_vectors = [];
+        this.zoom = 1.0;
     }
 
     setup_viewport(x_res, y_res, horizontal_fov) {
         this.aspect_ratio = (x_res / y_res);
-        this.viewport_height = 2;
+        this.viewport_height = 2 / this.zoom;
         this.viewport_width = this.aspect_ratio * this.viewport_height;
         this.x_res = x_res;
         this.y_res = y_res;

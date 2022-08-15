@@ -1,11 +1,17 @@
+MANDELBULB_DO_SPHERE = false;
+
 class mandelbulb_t {
     constructor() {
         this.distance = 0;
         this.ref_name = "fractal";
         this.color = new vec3(1.0, 1.0, 1.0);
+        this.sphere = new sphere_t();
+        this.sphere.pos.set(.1, 0, 0);
+        this.sphere.radius = .95;
 
         this.has_surface_normal = true;
-        this.has_surface_shader = true;
+        this.has_surface_shader = false;
+        this.shade_based_on_steps = true;
 
         //this.pos = new vec3(0, 0, 0);
 
@@ -20,12 +26,17 @@ class mandelbulb_t {
         let dp = dot3(light, this.surface_normal());
         if (dp < 0) dp = 0;
         return new vec3(dp*this.color.x, dp*this.color.y, dp*this.color.z);*/
+
+
+        /*
         let scaler = ray.num_steps / 100;
         let color = new vec3();
         color.set(1.0, 1.0, 1.0).scale_by(scaler);
         //color.normalize();
         color.set(1-color.x, 1-color.y, 1-color.z);
-        return color;
+        return color;*/
+
+        //return this.gradient.normalize_for_color();
     }
 
 
@@ -58,7 +69,26 @@ class mandelbulb_t {
         //console.log(r/dr);
         let f = 0.5*Math.log(r)*r/dr;
         //console.log(f);
-        return f;
+        if (MANDELBULB_DO_SPHERE) {
+            let f2 = this.sphere.dist_func(from);
+            //very interesting .75-1.1
+            //return f2 - f;
+
+            // hmm
+            /* let f3 = Math.max(f, f2);
+            f /= f3;
+            f2 /= f3;
+            return f * f2;*/
+
+            // interesting around .55
+            //return f * f2;
+
+            return f2 - f;
+            //return Math.min(f, this.sphere.dist_func(from));
+        }
+        else {
+            return f;
+        }
     }
 
     surface_normal() {
