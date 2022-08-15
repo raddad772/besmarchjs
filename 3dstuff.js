@@ -3,6 +3,7 @@
 const NMAX = 0x7FFFFFFFF
 const BKG_SKY = true
 const DO_GLOW = false;
+const DO_HIT_MAP = false;
 const GLOW_COLOR = new vec3(1, 1, 0);
 
 function dot3(vec1, vec2) {
@@ -142,6 +143,7 @@ class sphere_t {
 
         this.has_surface_shader = true;
         this.has_surface_normal = true;
+        this.shade_based_on_steps = false;
 
         // These are all "private"
         this.pos = new vec3();
@@ -165,17 +167,35 @@ class sphere_t {
     }
 }
 
-const MAX_MARCHES = 100000
+const MAX_MARCHES = 10000
 
 var canvas;
 const XRES=900;
 const YRES=600;
 const pi = Math.PI;
 
-const DIST_FOR_HIT = .00005;
+const DIST_FOR_HIT = .0000005;
 
 const ui_el = {
     dist_for_hit_input: ['distforhit', DIST_FOR_HIT],
+}
+
+class hit_scaler_t {
+    constructor(max_hits) {
+        this.max_hits = max_hits * 0.5;
+
+        this.mh = this.max_hits;
+        this.ig = 1/5;
+
+    }
+    scale(num) {
+        //let r = Math.log2(num) / Math.log2(this.max_hits);
+        let r = num / this.max_hits;
+        if (r > 1) r = 1;
+        return 1 - Math.pow(r, this.ig);
+        //return 1.0 - r;
+    }
+
 }
 
 function render_tests(imgdata) {
@@ -187,12 +207,14 @@ function render_tests(imgdata) {
     let angle = 270;
     let degrees_to_radians = function(degrees) { return (degrees / 180) * pi };
 
-
+    let max_hits =0;
+    let hit_map = new Uint32Array(XRES*YRES);
     let cam = new camera();
-    cam.pos.set(1, 0, 1.5)
-    let roto = degrees_to_radians(-30);
+    cam.pos.set(-1, 0, -1.5)
+    let roto = degrees_to_radians(180 + -34);
     cam.angle.set(0, roto, 0);
     let vecs = new Array(XRES * YRES);
+    cam.zoom = 1;
     cam.setup_viewport(XRES, YRES, 90);
     console.log('Setting up rays')
     cam.generate_vectors(vecs);
@@ -212,7 +234,7 @@ function render_tests(imgdata) {
     for (let y = 0; y<YRES; y++) {
         console.log('On Y', y);
         for (let x = 0; x<XRES; x++) {
-            let dp = (y*XRES)+x;
+            let dp = (y * XRES) + x;
             let ray = new ray_t(cam.pos, vecs[dp]);
             dp *= 4;
             let hit = false;
@@ -226,6 +248,7 @@ function render_tests(imgdata) {
                 }
                 if (oob.copy(ray.pos).subtract(scene.bounding_sphere.pos).magnitude() > scene.bounding_sphere.radius) break;
             }
+            let do_color = true;
             if (!hit) {
                 if (BKG_SKY) {
                     let t = (0.5 * vecs[dp / 4].y) + 1.0;
@@ -243,10 +266,17 @@ function render_tests(imgdata) {
                 } else {
                     color.set(0, 0, 0);
                 }
-            }
-            else {
+                hit_map[y * XRES + x] = 0;
+            } else {
+                hit_map[y * XRES + x] = ray.num_steps;
+                if (ray.num_steps > max_hits) {
+                    max_hits = ray.num_steps;
+                }
+
                 let obj = scene.min_was;
-                if (obj.has_surface_shader) {
+                if (obj.shade_based_on_steps) {
+                    do_color = false;
+                } else if (obj.has_surface_shader) {
                     color = obj.surface_shade(scene, ray, cam)
                 } else if (obj.has_surface_normal) {
                     color.copy(obj.surface_normal(ray.pos)).abself().add(new vec3(1.0, 1.0, 1.0)).scale_by(.5);
@@ -254,13 +284,30 @@ function render_tests(imgdata) {
                     color.copy(obj.color);
                 }
             }
-
-            imgdata[dp] = (color.x * 255) >> 0;
-            imgdata[dp+1] = (color.y * 255) >> 0;
-            imgdata[dp+2] = (color.z * 255) >> 0;
-            imgdata[dp+3] = 255;
-
-            // March ray
+            if (do_color) {
+                imgdata[dp] = (color.x * 255) >> 0;
+                imgdata[dp + 1] = (color.y * 255) >> 0;
+                imgdata[dp + 2] = (color.z * 255) >> 0;
+                imgdata[dp + 3] = 255;
+            }
+        }
+    }
+    if (DO_HIT_MAP) {
+        let scaler = new hit_scaler_t(max_hits);
+        for (let y = 0; y < YRES; y++) {
+            for (let x = 0; x < XRES; x++) {
+                let part = y*XRES + x;
+                let hm = hit_map[part];
+                if (hm !== 0) {
+                    let c = scaler.scale(hm);
+                    color.set(c, c, c);
+                    let dp = (y * XRES + x) * 4;
+                    imgdata[dp] = (color.x * 255) >> 0;
+                    imgdata[dp + 1] = (color.y * 255) >> 0;
+                    imgdata[dp + 2] = (color.z * 255) >> 0;
+                    imgdata[dp + 3] = 255;
+                }
+            }
         }
     }
 }

@@ -91,8 +91,19 @@ class vec3 {
         return Math.sqrt((this.x*this.x) + (this.y*this.y) + (this.z*this.z));
     }
 
+    normalize_for_color() {
+        let rx = Math.abs(this.x);
+        let ry = Math.abs(this.y);
+        let rz = Math.abs(this.z);
+        let max = Math.max(Math.max(rx, ry), rz);
+        this.x = rx / max;
+        this.y = ry / max;
+        this.z = rz / max;
+        return this;
+    }
+
     normalize_1() {
-        let ratio = Math.max(this.x, this.y, this.z);
+        let ratio = Math.max(Math.max(this.x, this.y), this.z);
         this.x /= ratio;
         this.y /= ratio;
         this.z /= ratio;
