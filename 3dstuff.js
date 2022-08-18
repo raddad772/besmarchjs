@@ -2,7 +2,7 @@
 
 let xres = 900;
 let yres = 600;
-let nthreads = 12;
+let nthreads = 4;
 let yslices = yres / nthreads;
 let xslices = 1;
 console.log('SLICES', xslices * yslices);
@@ -19,7 +19,7 @@ const RMSETTINGS = {
     yslices: yslices,
     OUTPUT_BUFFER_SIZE: 25, // 25 bytes per output pixel. A kind and up to 3 float64's
     BKG_SKY: true,          // Make the background sky-ish?
-    DO_GLOW: false,         // Do a glow effect
+    DO_GLOW: true,         // Do a glow effect
     GLOW_COLOR: new vec3(.1, 1, .25),
     MAX_MARCHES: 1000,      // Maximum number of marches
     DO_HIT_MAP: false,
@@ -289,9 +289,16 @@ class raymarcher_t {
         let degrees_to_radians = function(degrees) { return (degrees / 180) * pi };
 
         //this.cam = new raycam_t();
-        this.cam.pos.set(1, 0, 1.5)
+
+        // View from kindof the side
+        this.cam.pos.set(1, 0, 1.5).scale_by(2);
         let roto = degrees_to_radians(-30);
         this.cam.angle.set(0, roto, 0);
+
+        // Straight-on view
+        /*this.cam.pos.set(0, 0, 4);
+        this.cam.angle.set(0, 0, 0);*/
+
         this.cam.setup_viewport(RMSETTINGS.XRES, RMSETTINGS.YRES, 90);
         this.cam.zoom = 1;
         console.log('Setting up rays')
@@ -312,12 +319,14 @@ class raymarcher_t {
         this.waiting_on.next_done = false;
         Atomics.store(this.shared_counters, 0, 0);
         for (let threadnum=0; threadnum<RMSETTINGS.num_threads; threadnum++) {
+            console.log(threadnum);
             let rq = new raymarch_setup_t(this.scene, this.output_buffer, this.cam, this.counters_sab, threadnum);
             this.dispatch_to_worker(threadnum, rq);
         }
     }
 
     render_workers() {
+        console.log('Setup complete, begin render')
         let RENDER_REQ_ID = 1;
         let y_slice_size = Math.floor(RMSETTINGS.YRES / RMSETTINGS.yslices);
         let x_slice_size = Math.floor(RMSETTINGS.XRES / RMSETTINGS.xslices);
@@ -393,11 +402,31 @@ function make_scene() {
     let scene = new scene_t();
     let sphere = new sphere_t();
     let light = new light_t();
+    let plane = new plane_t();
+    let obj = new obj2_t();
+    obj.obj1 = new sphere_t();
+    obj.obj2 = new sphere_t();
+    obj.obj1.pos.set(-.8, 0, 0);
+    obj.obj1.radius = .6;
+    obj.obj2.pos.set(.25, 0, 0);
+    obj.obj2.radius = .8;
+
+    plane.color.set(0, 0.75, 0);
+    plane.a = 0;
+    plane.b = 1.25;
+    plane.c = 0;
+    plane.d = -1.25; // -.25 will bisect bottom half of sphere
     light.pos.set(0, -10.0, 0.0)
     sphere.pos.set(0, 0, 0);
     sphere.radius = 0.5;
-    scene.add_object(sphere);
+    let box = new box_t();
+    box.s.set(1, 1, 1);
+    box.c.set(0, 0, 0);
+    scene.add_object(box);
+    //scene.add_object(sphere);
+    //scene.add_object(obj);
     scene.add_light(light);
+    scene.add_object(plane);
     let mbulb = new mandelbulb_t();
     //scene.add_object(mbulb);
 

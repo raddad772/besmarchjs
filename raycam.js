@@ -46,7 +46,7 @@ class raycam_t {
         let lower_left_corner = new vec3( -(horizontal.x * .5), -(vertical.y * .5), -this.focal_length);
         let nega = new vec3(-this.angle.x, -this.angle.y, -this.angle.z);
         let matrix = new matrix3d().create_pov(new vec3(0, 0, 0), nega);
-        matrix.plog();
+        //matrix.plog();
         for (let y=this.y_res-1; y >= 0; y--) {
             for (let x = this.x_res - 1; x >= 0; x--) {
                 let u = x / (this.x_res-1);

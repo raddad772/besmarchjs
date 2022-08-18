@@ -4,8 +4,9 @@
 importScripts('vec3.js');
 importScripts('matrix3d.js');
 importScripts('raycam.js');
-importScripts('multithread_support.js');
+importScripts('shapes/geometric_forms.js');
 importScripts('shapes/mandelbulb.js');
+importScripts('multithread_support.js');
 
 let RMSETTINGS;
 
@@ -34,7 +35,8 @@ class raymarching_worker_t {
 
     march(x_start, x_end, y_start, y_end, request_id) {
         let color = new vec3();
-        let counter = 0;
+        let counter = 0
+        let min_was;
 
         for (let y = y_start; y <= y_end; y++) {
             for (let x = x_start; x <= x_end; x++) {
@@ -45,19 +47,24 @@ class raymarching_worker_t {
                 let oob = new vec3();
                 for (ray.num_steps = 0; ray.num_steps < RMSETTINGS.MAX_MARCHES; ray.num_steps++) {
                     let dist = this.scene.min_distance(ray.pos);
-                    ray.pos.add(new vec3(ray.dir).scale_by(dist));
                     hit = false;
-                    if (this.scene.min_was !== null) {
-                        if (this.scene.min_was.hit_sub_zero) {
+                    min_was = this.scene.min_was;
+                    if (min_was !== null) {
+                        if (min_was.hit_only_sub_zero) {
                             hit = dist <= 0;
-                        } else {
-                            hit = dist <= RMSETTINGS.DIST_FOR_HIT;
+                        }
+                        else {
+                            hit = dist <= RMSETTINGS.DIST_FOR_HIT
+                            if (min_was.hit_sub_zero) {
+                                hit |= dist <= 0;
+                            }
                         }
                         if (hit) break;
                     }
                     else {
                         debugger;
                     }
+                    ray.pos.add(new vec3(ray.dir).scale_by(dist));
                     if (oob.copy(ray.pos).subtract(this.scene.bounding_sphere.pos).magnitude() > this.scene.bounding_sphere.radius) break;
                 }
                 if (!hit) {
@@ -67,12 +74,12 @@ class raymarching_worker_t {
                 } else {
                     // Determine hit type
                     let obj = this.scene.min_was;
-                    switch(obj.shading_method) {
+                    switch(obj.props.shading_method) {
                         case SHADING_METHODS.SHADED:
                             hit_data.kind = HIT_KINDS.COLOR;
-                            if (obj.has_surface_shader) {
+                            if (obj.props.has_surface_shader) {
                                 hit_data.color.copy(obj.surface_shade(this.scene, ray, this.cam));
-                            } else if (obj.has_surface_normal) {
+                            } else if (obj.props.has_surface_normal) {
                                 hit_data.color.copy(obj.surface_normal(ray.pos)).abself().add(new vec3(1.0, 1.0, 1.0)).scale_by(.5);
                             } else {
                                 hit_data.color.copy(obj.color);
@@ -81,6 +88,13 @@ class raymarching_worker_t {
                         case SHADING_METHODS.STEP_COUNT:
                             hit_data.kind = HIT_KINDS.STEP_COUNTED;
                             hit_data.step_count = ray.num_steps;
+                            break;
+                        case SHADING_METHODS.COLOR:
+                            hit_data.kind = HIT_KINDS.COLOR;
+                            hit_data.color.copy(obj.color);
+                            break;
+                        default:
+                            console.log('UNHANDLED SHADING TYPE');
                             break;
                     }
                 }

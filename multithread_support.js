@@ -19,7 +19,9 @@ const HIT_KINDS = {
 const OBJ_KINDS = {
     SPHERE: 0,
     MANDELBULB: 1,
-    PLANE: 2
+    PLANE: 2,
+    OBJ2: 3,
+    BOX: 4,
 }
 
 class light_t {
@@ -115,53 +117,6 @@ class ray_t {
     }
 }
 
-class sphere_t {
-    constructor(old = null) {
-        if (old === null) {
-            // A valid ray-marching object has these two important things:
-            // a distance function,
-            // and a member to store the current distance.
-            this.distance = 0;
-            this.ref_name = "hello sphere";
-            this.color = new vec3(0, 0.5, 0.75);
-            this.pos = new vec3();
-            this.radius = 1.0;
-        }
-        else {
-            this.distance = old.distance;
-            this.ref_name = old.ref_name;
-            this.color = new vec3(old.color.x, old.color.y, old.color.z);
-            this.pos = new vec3(old.pos.x, old.pos.y, old.pos.z);
-            this.radius = old.radius;
-        }
-        this.has_surface_shader = true;
-        this.has_surface_normal = true;
-        this.hit_sub_zero = true;
-        this.shading_method = SHADING_METHODS.SHADED;
-
-        this.shade_based_on_steps = false;
-
-        this.kind = OBJ_KINDS.SPHERE;
-    }
-
-    surface_shade(scene, ray, cam) {
-        let light = new vec3(scene.lights[0].pos).subtract(ray.pos).normalize();
-        let dp = dot3(light, this.surface_normal(ray.pos));
-        if (dp < 0) dp = 0;
-        return new vec3(dp*this.color.x, dp*this.color.y, dp*this.color.z);
-    }
-
-    surface_normal(where) {
-        return new vec3(where).subtract(this.pos).normalize();
-    }
-
-    dist_func(what) {
-        // Signed distance from surface
-        return (Math.abs(this.pos.distance(what)) - this.radius);
-    }
-}
-
-
 class scene_t {
     constructor() {
         this.objects = [];
@@ -169,7 +124,7 @@ class scene_t {
         this.min_was = null;
         this.bounding_sphere = new sphere_t();
         this.bounding_sphere.pos.set(0, 0, 0);
-        this.bounding_sphere.radius = 20.0;
+        this.bounding_sphere.radius = 40.0;
     }
 
     setup_from(from) {
@@ -178,18 +133,8 @@ class scene_t {
         this.bounding_sphere = new sphere_t(from.bounding_sphere);
         for (let i in from.objects) {
             let obj = from.objects[i];
-            let mobj;
-            switch(obj.kind) {
-                case OBJ_KINDS.SPHERE:
-                    mobj = new sphere_t(obj);
-                    break;
-                case OBJ_KINDS.MANDELBULB:
-                    mobj = new mandelbulb_t(obj);
-                    break;
-                default:
-                    console.log('UNKNOWN KIND', obj.kind);
-                    break;
-            }
+            let mobj = dupe_obj(obj);
+            //console.log(obj);
             this.objects.push(mobj);
         }
 

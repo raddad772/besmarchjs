@@ -1,3 +1,5 @@
+const clip = (num, min, max) => Math.min(Math.max(num, min), max);
+
 class vec3 {
     constructor(x=null, y=null, z=null) {
         if ((x === null) && (y === null) && (z === null)) {
@@ -21,6 +23,27 @@ class vec3 {
             this.y = y;
             this.z = z;
         }
+    }
+
+    clipself(min, max) {
+        this.x = clip(this.x, min.x, max.x);
+        this.y = clip(this.y, min.y, max.y);
+        this.z = clip(this.z, min.z, max.z);
+        return this;
+    }
+
+    negself() {
+        this.x = -this.x;
+        this.y = -this.y;
+        this.z = -this.z;
+        return this;
+    }
+
+    maxself(what) {
+        this.x = Math.max(this.x, what);
+        this.y = Math.max(this.y, what);
+        this.z = Math.max(this.z, what);
+        return this;
     }
 
     set(x, y, z) {
@@ -80,6 +103,11 @@ class vec3 {
         return this;
     }
 
+    mod_new(val) {
+        //let r = new vec3(this.x, this.y, this.z).normalize()
+        return new vec3(this.x, this.y, this.z).normalize().scale_by(this.magnitude() % val);
+    }
+
     copy(vec) {
         this.x = vec.x;
         this.y = vec.y;
@@ -112,6 +140,7 @@ class vec3 {
 
     normalize() {
         let length = this.magnitude();
+        if (length === 0) return this;
         this.x /= length;
         this.y /= length;
         this.z /= length;
