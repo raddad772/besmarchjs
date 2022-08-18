@@ -1,69 +1,125 @@
+"use strict";
+
+
+importScripts('vec3.js');
+importScripts('matrix3d.js');
+importScripts('raycam.js');
+importScripts('multithread_support.js');
+importScripts('shapes/mandelbulb.js');
+
+let RMSETTINGS;
+
+class raymarching_worker_t {
+    constructor(worker_number, scene, cam, settings, output_buffer, shared_counters, request_id) {
+        this.scene = new scene_t();
+        this.cam = new raycam_t();
+        this.worker_num = worker_number;
+        this.setup_scene(scene);
+        this.setup_cam(cam);
+        RMSETTINGS = settings;
+        this.output_sab = output_buffer;
+        this.counters_sab = shared_counters;
+
+        this.shared_counters = new Int32Array(this.counters_sab);
+        this.output_buffer = new Uint8Array(this.output_sab);
+        this.complete_work(request_id, 1);
+    }
+
+    complete_work(request_id, value) {
+        let a = Atomics.add(this.shared_counters, request_id, value);
+        // Tell main thread to check if work is done
+        // Also tell it which worker number is now free
+        postMessage({worker_num: this.worker_num});
+    }
+
+    march(x_start, x_end, y_start, y_end, request_id) {
+        let color = new vec3();
+        let counter = 0;
+
+        for (let y = y_start; y <= y_end; y++) {
+            for (let x = x_start; x <= x_end; x++) {
+                let dp = (y * RMSETTINGS.XRES) + x;
+                let ray = new ray_t(RMSETTINGS.cam.pos, this.cam.view_vectors[dp]);
+                let hit_data = new hit_t();
+                let hit = false;
+                let oob = new vec3();
+                for (ray.num_steps = 0; ray.num_steps < RMSETTINGS.MAX_MARCHES; ray.num_steps++) {
+                    let dist = this.scene.min_distance(ray.pos);
+                    ray.pos.add(new vec3(ray.dir).scale_by(dist));
+                    hit = false;
+                    if (this.scene.min_was !== null) {
+                        if (this.scene.min_was.hit_sub_zero) {
+                            hit = dist <= 0;
+                        } else {
+                            hit = dist <= RMSETTINGS.DIST_FOR_HIT;
+                        }
+                        if (hit) break;
+                    }
+                    else {
+                        debugger;
+                    }
+                    if (oob.copy(ray.pos).subtract(this.scene.bounding_sphere.pos).magnitude() > this.scene.bounding_sphere.radius) break;
+                }
+                if (!hit) {
+                    // Set number of steps missed
+                    hit_data.kind = HIT_KINDS.MISS;
+                    hit_data.step_count = ray.num_steps;
+                } else {
+                    // Determine hit type
+                    let obj = this.scene.min_was;
+                    switch(obj.shading_method) {
+                        case SHADING_METHODS.SHADED:
+                            hit_data.kind = HIT_KINDS.COLOR;
+                            if (obj.has_surface_shader) {
+                                hit_data.color.copy(obj.surface_shade(this.scene, ray, this.cam));
+                            } else if (obj.has_surface_normal) {
+                                hit_data.color.copy(obj.surface_normal(ray.pos)).abself().add(new vec3(1.0, 1.0, 1.0)).scale_by(.5);
+                            } else {
+                                hit_data.color.copy(obj.color);
+                            }
+                            break;
+                        case SHADING_METHODS.STEP_COUNT:
+                            hit_data.kind = HIT_KINDS.STEP_COUNTED;
+                            hit_data.step_count = ray.num_steps;
+                            break;
+                    }
+                }
+                dp *= RMSETTINGS.OUTPUT_BUFFER_SIZE;
+                hit_data.serialize(this.output_buffer, dp);
+                // March ray
+            }
+            counter++;
+        }
+        //let a = Atomics.add(this.shared_counters, request_id, counter);
+        //console.log("A at", a);
+        //console.log('WORKER REPORTING DONE...', this.worker_num);
+        this.complete_work(request_id, 1)
+    }
+
+    // Reconstruct a scene from data which was copied
+    setup_scene(from) {
+        this.scene.setup_from(from);
+    }
+
+    // Reconstruct a full cam object from data which was copied
+    setup_cam(from) {
+        this.cam.setup_from(from);
+    }
+}
+
+let worker = null;
+
 /**
  *
- * @param {raymarch_request_t} e
+ * @param e
  */
-
-importScripts('raycam.js', 'matrix3d.js', 'vec3.js', 'multithread_support.js')
-
-function onmessage(e) {
-    console.log('Marching rays', e.y_start, e.y_end);
-    let color = new vec();
-    for (let y = e.y_start; y < e.y_end; y++) {
-        console.log('On Y', y);
-        for (let x = 0; x < e.settings.XRES; x++) {
-            let dp = (y * e.settings.XRES) + x;
-            let ray = new ray_t(e.settings.cam.pos, vecs[dp]);
-            dp *= e.settings.OUTPUT_BUFFER_SIZE;
-            let hit_data = new hit_t();
-            let hit = false;
-            let oob = new vec3();
-            for (ray.num_steps = 0; ray.num_steps < e.settings.MAX_MARCHES; ray.num_steps++) {
-                let dist = e.scene.min_distance(ray.pos);
-                ray.pos.add(new vec3(ray.dir).scale_by(dist));
-                hit = false;
-                if (e.scene.min_was.hot_sub_zero) {
-                    hit = dist <= 0;
-                }
-                else {
-                    hit = dist<= e.settings.DIST_FOR_HIT;
-                }
-                if (hit) break;
-                if (oob.copy(ray.pos).subtract(e.scene.bounding_sphere.pos).magnitude() > e.scene.bounding_sphere.radius) break;
-            }
-            if (!hit) {
-                if (e.settings.BKG_SKY) {
-                    let t = (0.5 * e.cam.view_vectors[dp / 4].y) + 1.0;
-                    color.set(1.0 - t, 1.0 - t, 1.0 - t);
-                    color.add(new vec3(0.5, 0.7, 1.0).scale_by(t));
-                    color.normalize_1();
-                    // Add a glow if we came close
-                    if (e.settings.DO_GLOW) {
-                        let glow = (ray.num_steps / 100);
-                        if (glow > 1) glow = 1;
-                        glow = glow > .2 ? (1.0 * glow) : 0;
-                        color.add(new vec3(GLOW_COLOR.x, GLOW_COLOR.y, GLOW_COLOR.z).scale_by(glow));
-                    }
-                    color.normalize_1();
-                } else {
-                    color.set(0, 0, 0);
-                }
-            } else {
-                let obj = e.scene.min_was;
-                if (obj.has_surface_shader) {
-                    color = obj.surface_shade(scene, ray, cam)
-                } else if (obj.has_surface_normal) {
-                    color.copy(obj.surface_normal(ray.pos)).abself().add(new vec3(1.0, 1.0, 1.0)).scale_by(.5);
-                } else {
-                    color.copy(obj.color);
-                }
-            }
-
-            this.imgdata[dp] = (color.x * 255) >> 0;
-            this.imgdata[dp + 1] = (color.y * 255) >> 0;
-            this.imgdata[dp + 2] = (color.z * 255) >> 0;
-            this.imgdata[dp + 3] = 255;
-
-            // March ray
-        }
+onmessage = function(e) {
+    //console.log('Thread message', e);
+    e = e.data;
+    if (e.kind === 'setup scene') {
+        //console.log('SETTING UP WITH', e);
+        worker = new raymarching_worker_t(e.worker_num, e.scene, e.cam, e.settings, e.output_buffer, e.shared_counters, e.request_id);
+    } else {
+        worker.march(e.x_start, e.x_end, e.y_start, e.y_end, e.request_id);
     }
 }

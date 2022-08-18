@@ -1,11 +1,22 @@
 "use strict";
 
+let xres = 900;
+let yres = 600;
+let nthreads = 12;
+let yslices = yres / nthreads;
+let xslices = 1;
+console.log('SLICES', xslices * yslices);
+
+
 const RMSETTINGS = {
     cam: null,              // Placeholder for camera class
-    XRES: 900,              // X render resolution
-    YRES: 600,              // Y render resolution
+    XRES: xres,              // X render resolution
+    YRES: yres,              // Y render resolution
     DIST_FOR_HIT: .0000005, // Distance for distance-based hits
-    num_threads: 12,        // 12 threads to render with
+    num_threads: nthreads,        // Number of worker threads
+    num_slices: xslices * yslices,          // Number of slices to slice screen into
+    xslices: xslices,
+    yslices: yslices,
     OUTPUT_BUFFER_SIZE: 25, // 25 bytes per output pixel. A kind and up to 3 float64's
     BKG_SKY: true,          // Make the background sky-ish?
     DO_GLOW: false,         // Do a glow effect
@@ -14,35 +25,35 @@ const RMSETTINGS = {
     DO_HIT_MAP: false,
 }
 
-const NMAX = 0x7FFFFFFFF
-
-function dot3(vec1, vec2) {
-    return (vec1.x*vec2.x) + (vec1.y*vec2.y) + (vec1.z*vec2.z);
-}
 
 class raymarch_request_t {
-    constructor(scene, output_buffer, y_start, y_end) {
-        this.settings = RMSETTINGS;
-        this.output_buffer = output_buffer;
-        this.scene = scene;
+    constructor(x_start, x_end, y_start, y_end, request_id) {
+        this.kind = 'march';
+        this.x_start = x_start;
+        this.x_end = x_end;
         this.y_start = y_start;
         this.y_end = y_end;
+        this.request_id = request_id;
     }
 }
 
-const HIT_KINDS = {
-    MISS: 0,
-    COLOR: 1,
-    NORMAL: 2,
-    STEP_COUNTED: 3
-}
-
-class light_t {
-    constructor(pos=null, strength=null) {
-        if (pos === null) this.pos = new vec3();
-        else this.pos = new vec3(pos);
-
-        this.strength = strength;
+class raymarch_setup_t {
+    /**
+     * @param {scene_t} scene
+     * @param {SharedArrayBuffer} output_buffer
+     * @param {raycam_t} cam
+     * @param {SharedArrayBuffer} shared_counters
+     * @param {Number} worker_num
+     */
+    constructor(scene, output_buffer, cam, shared_counters, worker_num) {
+        this.settings = RMSETTINGS;
+        this.output_buffer = output_buffer;
+        this.scene = scene;
+        this.cam = cam;
+        this.shared_counters = shared_counters;
+        this.kind = 'setup scene';
+        this.request_id = 0;
+        this.worker_num = worker_num;
     }
 }
 
@@ -54,6 +65,8 @@ class doublesphere_t {
 
         this.has_surface_shader = true;
         this.has_surface_normal = true;
+        this.hit_sub_zero = true;
+        this.shading_method = SHADING_METHODS.SHADED;
 
         this.pos1 = new vec3();
         this.radius1 = 1.0;
@@ -74,6 +87,9 @@ class mandelbulb2_t {
 
         this.has_surface_normal = true;
         this.has_surface_shader = false;
+        this.hit_sub_zero = false;
+        this.shading_method = SHADING_METHODS.STEP_COUNT;
+
 
         this.bailout = 500000;
         this.iterations = 1000;
@@ -108,47 +124,15 @@ class mandelbulb2_t {
 
 }
 
-class sphere_t {
-    constructor() {
-        // A valid ray-marching object has these two important things:
-        // a distance function,
-        // and a member to store the current distance.
-        this.distance = 0;
-        this.ref_name = "hello sphere";
-        this.color = new vec3(0, 0.5, 0.75);
-
-        this.has_surface_shader = true;
-        this.has_surface_normal = true;
-        this.shade_based_on_steps = false;
-
-        // These are all "private"
-        this.pos = new vec3();
-        this.radius = 1.0;
-    }
-
-    surface_shade(scene, ray, cam) {
-        let light = new vec3(scene.lights[0].pos).subtract(ray.pos).normalize();
-        let dp = dot3(light, this.surface_normal(ray.pos));
-        if (dp < 0) dp = 0;
-        return new vec3(dp*this.color.x, dp*this.color.y, dp*this.color.z);
-    }
-
-    surface_normal(where) {
-        return new vec3(where).subtract(this.pos).normalize();
-    }
-
-    dist_func(what) {
-        // Signed distance from surface
-        return (Math.abs(this.pos.distance(what)) - this.radius);
-    }
-}
 
 var canvas;
 const pi = Math.PI;
 
 const ui_el = {
-    dist_for_hit_input: ['distforhit', DIST_FOR_HIT],
+    dist_for_hit_input: ['distforhit', RMSETTINGS.DIST_FOR_HIT],
 }
+
+const NUM_SHARED_COUNTERS = 4;
 
 class raymarcher_t {
     constructor(imgdata) {
@@ -156,22 +140,48 @@ class raymarcher_t {
         this.workers = new Array(RMSETTINGS.num_threads);
         if (RMSETTINGS.num_threads > 1) {
             for (let w = 0; w < RMSETTINGS.num_threads; w++) {
-                //this.workers[w] = new Worker('snes_ppu_worker.js');
-                /*if (PPU_USE_BLOBWORKERS) {
-                    this.workers[w] = new Worker(URL.createObjectURL(new Blob(["(" + PPU_worker_function.toString() + ")()"], {type: 'text/javascript'})));
-                } else {*/
                 this.workers[w] = new Worker('render_worker.js');
-                //}
-                //const myWorker = new Worker("worker.js");
                 this.workers[w].onmessage = this.on_worker_message.bind(this);
             }
         }
         this.workers_finished = 0;
         this.output_buffer = new SharedArrayBuffer(RMSETTINGS.XRES * RMSETTINGS.YRES * RMSETTINGS.OUTPUT_BUFFER_SIZE)
+        this.hit_scaler = new hit_scaler_t(RMSETTINGS.MAX_MARCHES);
+        this.glow_scaler = new glow_scaler_t(RMSETTINGS.MAX_MARCHES, 100, 0.2, 1);
+        this.cam = null;
+        this.counters_sab = new SharedArrayBuffer(4*NUM_SHARED_COUNTERS);
+        this.shared_counters = new Int32Array(this.counters_sab);
+        this.total_lines = 0;
+
+        this.waiting_on = {
+            pos: 0,
+            value: 0,
+            notnext: null, //function(worker_num){},
+            next: function(){console.log('UNBOUND WAIT FINISH!'); debugger;},
+            next_done: false,
+        }
+        this.scene = new scene_t();
+        this.cam = new raycam_t();
+        this.render_slices = [];
+        this.render_slice_pos = 0;
+        this.render_slices_returned = 0;
+
+        this.last_logged_percent = 0;
     }
 
     dispatch_to_worker(num, msg) {
         this.workers[num].postMessage(msg);
+    }
+
+    hit_map(steps) {
+        let color = new vec3(0, 0, 0);
+        if (steps !== 0) {
+            let c = this.hit_scaler.scale(steps);
+            color.set(c, c, c);
+            //let dp = (y * RMSETTINGS.XRES + x) * 4;
+            return color;
+        }
+        else return null;
     }
 
     present() {
@@ -179,25 +189,58 @@ class raymarcher_t {
         let color = new vec3();
         let inbuffer = new Uint8Array(this.output_buffer);
         let hitdata = new hit_t();
+        let r;
+        let steps = 0;
         for (let y = 0; y < RMSETTINGS.YRES; y++) {
             for (let x = 0; x < RMSETTINGS.XRES; x++) {
                 let psb = ((y * RMSETTINGS.XRES) + x) * RMSETTINGS.OUTPUT_BUFFER_SIZE;
-
-                hitdata.deserialize(this.output_buffer, psb);
+                let dp = (y * RMSETTINGS.XRES) + x;
+                let do_miss = true;
+                hitdata.deserialize(inbuffer, psb);
                 switch(hitdata.kind) {
                     case HIT_KINDS.MISS:
-                        color.set(1, 0, 0);
+                        steps = hitdata.step_count;
                         break;
                     case HIT_KINDS.COLOR:
+                        do_miss = false;
                         color.copy(hitdata.color);
                         break;
                     case HIT_KINDS.NORMAL:
                         console.log("UHHH why did I make this");
                         break;
                     case HIT_KINDS.STEP_COUNTED:
-                        // Do step count stuff here
+                        r = this.hit_map(hitdata.step_count);
+                        if (r !== null) {
+                            color.copy(r);
+                            do_miss = false;
+                        }
+                        else {
+                            steps = hitdata.step_count;
+                        }
                         break;
                 }
+                if (do_miss) {
+                    color.set(0, 0, 0);
+                    if (RMSETTINGS.BKG_SKY) {
+                        let t = (0.5 * this.cam.view_vectors[dp].y) + 1.0;
+                        color.set(1.0 - t, 1.0 - t, 1.0 - t);
+                        color.add(new vec3(0.5, 0.7, 1.0).scale_by(t));
+                        color.normalize_1();
+                        // Add a glow if we came close
+                    }
+                    if (RMSETTINGS.DO_GLOW) {
+                        this.glow_scaler.scale(steps, color);
+                        color.normalize_1();
+                    }
+                }
+                dp *= 4;
+                /*this.imgdata[dp] = Math.floor(color.x * 255);
+                this.imgdata[dp+1] = Math.floor(color.y * 255);
+                this.imgdata[dp+2] = Math.floor(color.z + 255);*/
+                this.imgdata[dp] = (color.x * 255) >> 0;
+                this.imgdata[dp+1] = (color.y * 255) >> 0;
+                this.imgdata[dp+2] = (color.z * 255) >> 0;
+                this.imgdata[dp+3] = 255;
             }
         }
 
@@ -207,14 +250,31 @@ class raymarcher_t {
                 this.imgdata[pid+1] = g;
                 this.imgdata[pid+2] = b;
                 this.imgdata[pid+3] = 255;*/
-
+        console.log('TIME TO CALL NEXT');
         this.then();
     }
 
     on_worker_message(e) {
-        this.workers_finished++;
-        if (this.workers_finished >= RMSETTINGS.num_threads) {
-            this.present();
+        // Check the waiting_on.pos for waiting_on.value and perform waiting_on.next if so
+        let v = Atomics.load(this.shared_counters, this.waiting_on.pos);
+        //console.log('GOT', v, 'OF', this.waiting_on.value);
+
+        if (v === this.waiting_on.value) {
+            if (!this.waiting_on.next_done) {
+                this.waiting_on.next_done = true;
+                this.waiting_on.next();
+            }
+        }
+        else {
+            if (this.waiting_on.notnext !== null) {
+                this.render_slices_returned++;
+                let perc = Math.floor((this.render_slices_returned / this.render_slices.length) * 100);
+                if ((perc - this.last_logged_percent) >= 5) {
+                    console.log('Returned %:', perc);
+                    this.last_logged_percent = perc;
+                }
+                this.waiting_on.notnext(e.data.worker_num);
+            }
         }
     }
 
@@ -228,28 +288,86 @@ class raymarcher_t {
         let angle = 270;
         let degrees_to_radians = function(degrees) { return (degrees / 180) * pi };
 
-        let cam = new raycamera();
-        cam.pos.set(1, 0, 1.5)
+        //this.cam = new raycam_t();
+        this.cam.pos.set(1, 0, 1.5)
         let roto = degrees_to_radians(-30);
-        cam.angle.set(0, roto, 0);
-        cam.setup_viewport(RMSETTINGS.XRES, RMSETTINGS.YRES, 90);
-        cam.zoom = 1;
+        this.cam.angle.set(0, roto, 0);
+        this.cam.setup_viewport(RMSETTINGS.XRES, RMSETTINGS.YRES, 90);
+        this.cam.zoom = 1;
         console.log('Setting up rays')
-        cam.generate_vectors(vecs);
+        this.cam.generate_vectors();
         console.log('Setting up scene')
-        RMSETTINGS.cam = cam;
-        let slices = [];
-        // R G B, Z, N
-        let slice_size = Math.floor(RMSETTINGS.YRES / RMSETTINGS.num_threads);
-        let y = 0;
+        RMSETTINGS.cam = this.cam;
+
+        this.scene.setup_from(scene);
+
+        this.setup_workers(this.render_workers.bind(this));
+    }
+
+    setup_workers(next) {
+        console.log('Sending scene to workers...');
+        this.waiting_on.pos = 0;
+        this.waiting_on.value = RMSETTINGS.num_threads;
+        this.waiting_on.next = next;
+        this.waiting_on.next_done = false;
+        Atomics.store(this.shared_counters, 0, 0);
         for (let threadnum=0; threadnum<RMSETTINGS.num_threads; threadnum++) {
-            slices[threadnum] = new raymarch_request_t(scene, this.output_buffer, y, (y+slice_size)-1);
-            y += slice_size;
+            let rq = new raymarch_setup_t(this.scene, this.output_buffer, this.cam, this.counters_sab, threadnum);
+            this.dispatch_to_worker(threadnum, rq);
         }
-        this.workers_finshed = 0;
+    }
+
+    render_workers() {
+        let RENDER_REQ_ID = 1;
+        let y_slice_size = Math.floor(RMSETTINGS.YRES / RMSETTINGS.yslices);
+        let x_slice_size = Math.floor(RMSETTINGS.XRES / RMSETTINGS.xslices);
+        let y = 0;
+        this.waiting_on.pos = RENDER_REQ_ID;
+        this.render_slices = [];
+        this.render_slice_pos = 0;
+        this.render_slices_returned = 0;
+        let slice_num = 0;
+        while(y < RMSETTINGS.YRES) {
+            let x = 0;
+            while (x < RMSETTINGS.XRES) {
+                this.render_slices[slice_num++] = new raymarch_request_t(x, (x+x_slice_size)-1, y, (y+y_slice_size)-1, this.waiting_on.pos);
+                x += x_slice_size;
+            }
+            y += y_slice_size;
+        }
+
+        this.waiting_on.value = this.render_slices.length;
+        this.waiting_on.next = this.present.bind(this);
+        this.waiting_on.notnext = this.send_render_slice.bind(this);
+        this.waiting_on.next_done = false;
+        // scene, this.output_buffer, this.cam, this.shared_counters
         for (let i = 0; i<RMSETTINGS.num_threads; i++) {
-            this.dispatch_to_worker(i, slices[i]);
+            this.send_render_slice(i);
         }
+    }
+
+    send_render_slice(worker_num) {
+        if (this.render_slice_pos >= this.render_slices.length) {
+            return;
+        }
+        this.dispatch_to_worker(worker_num, this.render_slices[this.render_slice_pos]);
+        this.render_slice_pos++;
+    }
+}
+
+class glow_scaler_t {
+    constructor(max_hits, area, threshold, multiplier) {
+        this.max_hits = max_hits;
+        this.area = area;
+        this.multiplier = multiplier;
+        this.threshold = threshold;
+    }
+
+    scale(num, vec) {
+        let glow = (num / this.area);
+        if (glow > 1) glow = 1;
+        glow = glow > this.threshold ? (this.multiplier * glow) : 0;
+        vec.add(new vec3(RMSETTINGS.GLOW_COLOR.x, RMSETTINGS.GLOW_COLOR.y, RMSETTINGS.GLOW_COLOR.z).scale_by(glow));
     }
 }
 
@@ -278,40 +396,21 @@ function make_scene() {
     light.pos.set(0, -10.0, 0.0)
     sphere.pos.set(0, 0, 0);
     sphere.radius = 0.5;
-    //scene.add_object(sphere);
+    scene.add_object(sphere);
     scene.add_light(light);
     let mbulb = new mandelbulb_t();
-    scene.add_object(mbulb);
+    //scene.add_object(mbulb);
 
     return scene;
 }
-
-/*    if (DO_HIT_MAP) {
-        let scaler = new hit_scaler_t(max_hits);
-        for (let y = 0; y < YRES; y++) {
-            for (let x = 0; x < XRES; x++) {
-                let part = y*XRES + x;
-                let hm = hit_map[part];
-                if (hm !== 0) {
-                    let c = scaler.scale(hm);
-                    color.set(c, c, c);
-                    let dp = (y * XRES + x) * 4;
-                    imgdata[dp] = (color.x * 255) >> 0;
-                    imgdata[dp + 1] = (color.y * 255) >> 0;
-                    imgdata[dp + 2] = (color.z * 255) >> 0;
-                    imgdata[dp + 3] = 255;
-                }
-            }
-        }
-    }*/
 
 function main() {
     canvas = document.getElementById('drawhere');
     var ctx = canvas.getContext('2d');
     var imgdata = ctx.getImageData(0, 0, RMSETTINGS.XRES, RMSETTINGS.YRES);
 
-    let renderer = new raymarcher_t(imgdata.data, scene);
     let scene = make_scene();
+    let renderer = new raymarcher_t(imgdata.data, scene);
     renderer.render(scene, function() {
         console.log('DONE!');
         ctx.putImageData(imgdata, 0, 0);

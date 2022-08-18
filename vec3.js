@@ -151,7 +151,7 @@ class vec3 {
     deserialize(buf, pos) {
         let inbuf = new ArrayBuffer(24);
         let ibuf = new Float64Array(inbuf);
-        let dbuf = new Uint8Array(buf);
+        let dbuf = new Uint8Array(inbuf);
         for (let i = 0; i < 24; i++) {
             dbuf[i] = buf[pos+i];
         }

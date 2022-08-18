@@ -1,6 +1,6 @@
 "use strict";
 
-class raycamera {
+class raycam_t {
     constructor() {
         this.pos = new vec3(0, 0, 0);
         this.angle = new vec3(0, 0, 0);
@@ -12,6 +12,22 @@ class raycamera {
         this.focal_length = 1.0;
         this.view_vectors = [];
         this.zoom = 1.0;
+    }
+
+    /**
+     * @param {raycam_t} from
+     */
+    setup_from(from) {
+        // Copy data after dispatched in thread message
+        this.pos.set(from.pos.x, from.pos.y, from.pos.z);
+        this.angle.set(from.angle.x, from.angle.y, from.angle.z);
+        this.aspect_ratio = from.aspect_ratio;
+        this.viewport_height = from.viewport_height;
+        this.viewport_width = from.viewport_width;
+        this.fov = from.fov;
+        this.focal_length = from.focal_length;
+        this.view_vectors = from.view_vectors;
+        this.zoom = from.zoom;
     }
 
     setup_viewport(x_res, y_res, horizontal_fov) {
@@ -32,7 +48,6 @@ class raycamera {
         let matrix = new matrix3d().create_pov(new vec3(0, 0, 0), nega);
         matrix.plog();
         for (let y=this.y_res-1; y >= 0; y--) {
-            console.log('On scanline', y);
             for (let x = this.x_res - 1; x >= 0; x--) {
                 let u = x / (this.x_res-1);
                 let v = y / (this.y_res-1);

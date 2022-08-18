@@ -1,24 +1,36 @@
 MANDELBULB_DO_SPHERE = false;
 
 class mandelbulb_t {
-    constructor() {
-        this.distance = 0;
+    constructor(old=null) {
+        if (old === null) {
+            this.distance = 0;
+            this.color = new vec3(1.0, 1.0, 1.0);
+            this.sphere = new sphere_t();
+            this.sphere.pos.set(.1, 0, 0);
+            this.sphere.radius = .95;
+            this.bailout = 10;
+            this.iterations = 100;
+            this.power = 8;
+        }
+        else {
+            this.distance = old.distance;
+            this.color = new vec3(old.color.x, old.color.y, old.color.z);
+            this.sphere = new sphere_t(old.sphere);
+            this.bailout = old.bailout;
+            this.iterations = old.iterations;
+            this.power = old.power;
+        }
         this.ref_name = "fractal";
-        this.color = new vec3(1.0, 1.0, 1.0);
-        this.sphere = new sphere_t();
-        this.sphere.pos.set(.1, 0, 0);
-        this.sphere.radius = .95;
 
         this.has_surface_normal = true;
         this.has_surface_shader = false;
         this.shade_based_on_steps = true;
+        this.hit_sub_zero = false;
+        this.shading_method = SHADING_METHODS.STEP_COUNT;
 
-        //this.pos = new vec3(0, 0, 0);
 
-        this.bailout = 10;
-        this.iterations = 100;
-        this.power = 8;
         this.gradient = new vec3();
+        this.kind = OBJ_KINDS.MANDELBULB;
     }
 
     surface_shade(scene, ray, cam) {
